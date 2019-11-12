@@ -1,4 +1,5 @@
 import sys
+
 import requests
 from bs4 import BeautifulSoup as Soup
 
@@ -127,11 +128,15 @@ class ImdbQuery(object):
         series_page = "https://www.imdb.com/title/{}/episodes?season=1&ref_=tt_eps_sn_1".format(title_code)
         bsoup = Soup(requests.get(series_page).text, 'html.parser')
         num = 0
-        for i in bsoup.find("select", id="bySeason").contents:
-            if "<option value=" in str(i):
-                if num < int(str(i).split("<option value=")[1].split(">")[0].strip("\"")):
-                    num = int(str(i).split("<option value=")[1].split(">")[0].strip("\""))
-        return num
+        try:
+            for i in bsoup.find("select", id="bySeason").contents:
+                if "<option value=" in str(i):
+                    if num < int(str(i).split("<option value=")[1].split(">")[0].strip("\"")):
+                        num = int(str(i).split("<option value=")[1].split(">")[0].strip("\""))
+            return num
+        except AttributeError:
+            return 0
+
 
     @staticmethod
     def get_season_episodes(title_code, season):
@@ -161,63 +166,68 @@ class ImdbQuery(object):
 
 def main():
     while True:
-        media_type = input("\nSelect media type:\n\n1. Movie\n\n2. TV\n\n")
-        if media_type == "2":
-            title = input("\nTitle:\n\n")
-            media = "tvod"
-            imdb_query = ImdbQuery(title)
-            imdb_query.scrape_title_codes()
-            title_code = imdb_query.title_codes[0]
-            seasons = imdb_query.get_series_seasons(title_code)
-            season = (input("\nSeason: (1 - {})\n\n".format(seasons)))
-            episode_titles = imdb_query.scrape_episode_titles(title_code, season)
-            print("\nEpisodes:\n")
-            for e in episode_titles:
-                print("\n{}".format(e))
-            episode = input("\nEpisode:\n\n")
-            vaw = VidnodeApiWrapper(media, title=title, s=season, e=episode)
-            search = vaw.assemble_search_url()
-            media_url = vaw.assemble_media_url(search)
-            link_dict = vaw.scrape_final_links(media_url)
-            key_list = []
-            print("\nAvailable Qualities:\n\n")
-            try:
-                for key in link_dict['hotlinks'].keys():
-                    key_list.append(key)
-                for key in key_list:
-                    print("{}. {}\n".format(key_list.index(key), key))
-                q_sel = int(input("\nSelect quality:\n\n"))
-                link = link_dict['hotlinks'][key_list[q_sel]]
-                print("\nLink:\n\n{}\n".format(link))
-            except TypeError:
-                print("\nNo links were found!\n")
-                continue
-        elif media_type == "q":
-            print("\nGoodbye!\n")
-            sys.exit()
+        try:
+            media_type = input("\nSelect media type:\n\n1. Movie\n\n2. TV\n\n")
+            if media_type == "2":
+                title = input("\nTitle:\n\n")
+                media = "tvod"
+                imdb_query = ImdbQuery(title)
+                imdb_query.scrape_title_codes()
+                if len(imdb_query.title_codes) == 0:
+                    print("\nNo links found!\n")
+                    continue
+                title_code = imdb_query.title_codes[0]
+                seasons = imdb_query.get_series_seasons(title_code)
+                season = (input("\nSeason: (1 - {})\n\n".format(seasons)))
+                episode_titles = imdb_query.scrape_episode_titles(title_code, season)
+                print("\nEpisodes:\n")
+                for e in episode_titles:
+                    print("\n{}".format(e))
+                episode = input("\nEpisode:\n\n")
+                vaw = VidnodeApiWrapper(media, title=title, s=season, e=episode)
+                search = vaw.assemble_search_url()
+                media_url = vaw.assemble_media_url(search)
+                link_dict = vaw.scrape_final_links(media_url)
+                key_list = []
+                print("\nAvailable Qualities:\n\n")
+                try:
+                    for key in link_dict['hotlinks'].keys():
+                        key_list.append(key)
+                    for key in key_list:
+                        print("{}. {}\n".format(key_list.index(key), key))
+                    q_sel = int(input("\nSelect quality:\n\n"))
+                    link = link_dict['hotlinks'][key_list[q_sel]]
+                    print("\nLink:\n\n{}\n".format(link))
+                except TypeError:
+                    print("\nNo links were found!\n")
+                    continue
+            elif media_type == "q":
+                print("\nGoodbye!\n")
+                sys.exit()
 
-        elif media_type == "1":
-            title = input("\nTitle:\n\n")
-            media = "movie"
-            vaw = VidnodeApiWrapper(media, title=title)
-            search = vaw.assemble_search_url()
-            media_url = vaw.assemble_media_url(search)
-            link_dict = vaw.scrape_final_links(media_url)
-            key_list = []
-            print("\nAvailable Qualities:\n\n")
-            try:
-                for key in link_dict['hotlinks'].keys():
-                    key_list.append(key)
-                for key in key_list:
-                    print("{}. {}\n".format(key_list.index(key), key))
-                q_sel = int(input("\nSelect quality:\n\n"))
-                link = link_dict['hotlinks'][key_list[q_sel]]
-                print("\nLink:\n\n{}\n".format(link))
-            except TypeError:
-                print("\nNo links were found!\n")
-                continue
+            elif media_type == "1":
+                title = input("\nTitle:\n\n")
+                media = "movie"
+                vaw = VidnodeApiWrapper(media, title=title)
+                search = vaw.assemble_search_url()
+                media_url = vaw.assemble_media_url(search)
+                link_dict = vaw.scrape_final_links(media_url)
+                key_list = []
+                print("\nAvailable Qualities:\n\n")
+                try:
+                    for key in link_dict['hotlinks'].keys():
+                        key_list.append(key)
+                    for key in key_list:
+                        print("{}. {}\n".format(key_list.index(key), key))
+                    q_sel = int(input("\nSelect quality:\n\n"))
+                    link = link_dict['hotlinks'][key_list[q_sel]]
+                    print("\nLink:\n\n{}\n".format(link))
+                except TypeError:
+                    print("\nNo links were found!\n")
+                    continue
+        except TypeError or AttributeError or IndexError:
+            print("\nNo links found!\n")
 
 
 if __name__ == "__main__":
     main()
-
