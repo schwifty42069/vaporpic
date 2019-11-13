@@ -1,22 +1,22 @@
 import sys
+import urllib.error
+import urllib.request
 
 import requests
 from bs4 import BeautifulSoup as Soup
+from tqdm import tqdm
 
 
-class VidnodeApiWrapper(object):
-    def __init__(self, media_type, **kwargs):
+class VidnodeApi(object):
+    def __init__(self, media_type, title, **kwargs):
         super().__init__()
         self.root_url = "https://gowatchseries.fm/"
         self.media_type = media_type
+        self.title = title
         if self.media_type == "tvod":
-            assert "s" in kwargs.keys() and "e" in kwargs.keys() and "title" in kwargs.keys()
+            assert "s" in kwargs.keys() and "e" in kwargs.keys()
             self.season = kwargs.get("s")
             self.episode = kwargs.get("e")
-            self.title = kwargs.get("title")
-        if self.media_type == "movie":
-            assert "title" in kwargs.keys()
-            self.title = kwargs.get("title")
 
     def assemble_search_url(self):
         search_url = self.root_url + "search.html?keyword={}".format(self.title)
@@ -58,7 +58,7 @@ class VidnodeApiWrapper(object):
                 return search_url + "-episode-1"
 
     @staticmethod
-    def scrape_final_links(link):
+    def scrape_final_links(link, bot_mode):
         browser_link = ''
         hotlink_location = ''
         link_dict = {}
@@ -71,6 +71,8 @@ class VidnodeApiWrapper(object):
         bsoup_hll = Soup(requests.get(browser_link).text, 'html.parser')
         for d in bsoup_hll.findAll("script"):
             if "download" in str(d):
+                if bot_mode:
+                    return str(d).split("window.open(")[1].strip("\n").strip(" ").split(",")[0].strip("\"")
                 hotlink_location = str(d).split("window.open(")[1].strip("\n").strip(" ").split(",")[0].strip("\"")
         dl_links = []
         bsoup_d = Soup(requests.get(hotlink_location).text, 'html.parser')
@@ -91,6 +93,97 @@ class VidnodeApiWrapper(object):
                 dl_quality_dict.update({"Original": link})
         link_dict.update({"browser_link": browser_link, "hotlinks": dl_quality_dict})
         return link_dict
+
+
+class WatchEpisodeApi(object):
+    def __init__(self, title, season, episode):
+        self.root_url = "https://www.watchepisodes4.com"
+        self.season = season
+        self.episode = episode
+        self.title = title.replace("\'", "-")
+        self.title_words = self.title.split()
+        self.formatted_title = ''
+        for word in self.title_words:
+            self.formatted_title += word + "-"
+        self.formatted_search = "{}season-{}-episode-{}".format(self.formatted_title, self.season, self.episode)
+        self.formatted_url = "{}/{}".format(self.root_url, self.formatted_title)
+
+    def fetch_ref_link(self):
+        title = ''
+        if self.formatted_title[len(self.formatted_title) - 1] == "-":
+            title = self.formatted_title[:len(self.formatted_title) - 1]
+        bsoup = Soup(requests.get("{}/{}".format(self.root_url, title)).text, 'html.parser')
+        for a in bsoup.findAll("a"):
+            try:
+                if "person" not in a['href'] and "profile" not in a['href'] and self.formatted_search.lower() in a['href']:
+                    return a['href']
+            except KeyError:
+                continue
+
+    def build_source_link_list(self, ref_link):
+        link_list = []
+        bsoup = Soup(requests.get(ref_link).text, 'html.parser')
+        for a in bsoup.findAll("a"):
+            try:
+                if "person" not in a['href'] and "profile" not in a['href'] and self.formatted_search.lower() \
+                        in a['href'] and a['href'] not in link_list:
+                    link_list.append(a['href'])
+            except KeyError:
+                continue
+        source_links = []
+        print("\nFinding source links...\n")
+        bar = tqdm(total=len(link_list))
+        for link in link_list:
+            bsoup2 = Soup(requests.get(link).text, 'html.parser')
+            source_links.append(bsoup2.find("a", {"class": "detail-w-button act_watchlink2"})['data-actuallink'])
+            bar.update(1)
+        return source_links
+
+    @staticmethod
+    def scrape_hotlinks(source_links):
+        hotlinks = []
+        print("\nFinding hotlinks...\n")
+        bar = tqdm(total=len(source_links))
+        for link in source_links:
+            if "clipwatching" in link:
+                bsoup = Soup(requests.get(link).text, 'html.parser')
+                for s in bsoup.findAll("script"):
+                    if "#hola" in str(s) and "player" in str(s):
+                        if str(s).split("sources: [{src: ")[1].split(",")[0].strip("\"") not in hotlinks:
+                            hotlinks.append(str(s).split("sources: [{src: ")[1].split(",")[0].strip("\""))
+            elif "onlystream" in link:
+                bsoup = Soup(requests.get(link).text, 'html.parser')
+                for s in bsoup.findAll("script"):
+                    if "jwplayer.defaults" in str(s):
+                        if str(s).split("sources: [{file:")[1].split(",")[0].strip("\"") not in hotlinks:
+                            hotlinks.append(str(s).split("sources: [{file:")[1].split(",")[0].strip("\""))
+            elif "vidlox" in link:
+                bsoup = Soup(requests.get(link).text, 'html.parser')
+                for s in bsoup.findAll("script"):
+                    if "new Clappr.Player" in str(s):
+                        if str(s).split("sources: [")[1].split(",")[3].strip("\"").strip("\"]") not in hotlinks:
+                            hotlinks.append(str(s).split("sources: [")[1].split(",")[3].strip("\"").strip("\"]"))
+                bar.update(1)
+
+            else:
+                continue
+        return hotlinks
+
+
+class SimpleMovieApi(object):
+    def __init__(self, title):
+        self.title = title
+        self.imdb = ImdbQuery(title)
+        self.imdb.scrape_title_codes()
+        self.title_code = self.imdb.title_codes[0]
+        self.url = "http://23.237.120.130/movies/movies/{}_play.mp4".format(self.title_code)
+
+    def check_for_movie(self):
+        try:
+            urllib.request.urlopen(self.url)
+            return self.url
+        except urllib.error.HTTPError:
+            return -1
 
 
 class ImdbQuery(object):
@@ -184,10 +277,10 @@ def main():
                 for e in episode_titles:
                     print("\n{}".format(e))
                 episode = input("\nEpisode:\n\n")
-                vaw = VidnodeApiWrapper(media, title=title, s=season, e=episode)
-                search = vaw.assemble_search_url()
-                media_url = vaw.assemble_media_url(search)
-                link_dict = vaw.scrape_final_links(media_url)
+                va = VidnodeApi(media, title, s=season, e=episode)
+                search = va.assemble_search_url()
+                media_url = va.assemble_media_url(search)
+                link_dict = va.scrape_final_links(media_url, False)
                 key_list = []
                 print("\nAvailable Qualities:\n\n")
                 try:
@@ -208,10 +301,10 @@ def main():
             elif media_type == "1":
                 title = input("\nTitle:\n\n")
                 media = "movie"
-                vaw = VidnodeApiWrapper(media, title=title)
-                search = vaw.assemble_search_url()
-                media_url = vaw.assemble_media_url(search)
-                link_dict = vaw.scrape_final_links(media_url)
+                va = VidnodeApi(media, title)
+                search = va.assemble_search_url()
+                media_url = va.assemble_media_url(search)
+                link_dict = va.scrape_final_links(media_url, False)
                 key_list = []
                 print("\nAvailable Qualities:\n\n")
                 try:
