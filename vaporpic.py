@@ -1,6 +1,5 @@
+import json
 import sys
-import urllib.error
-import urllib.request
 
 import requests
 from bs4 import BeautifulSoup as Soup
@@ -44,7 +43,7 @@ class VidnodeApi(object):
                     if search_str[len(search_str) - 1] == "-":
                         search_str = search_str[:len(search_str) - 2]
                     if search_str.lower() in a['href']:
-                        return self.root_url + a['href'].strip("/info/")
+                        return self.root_url + a['href'].split("/info/")[1]
                 except KeyError:
                     continue
 
@@ -151,18 +150,7 @@ class WatchEpisodeApi(object):
                     if "#hola" in str(s) and "player" in str(s):
                         if str(s).split("sources: [{src: ")[1].split(",")[0].strip("\"") not in hotlinks:
                             hotlinks.append(str(s).split("sources: [{src: ")[1].split(",")[0].strip("\""))
-            elif "onlystream" in link:
-                bsoup = Soup(requests.get(link).text, 'html.parser')
-                for s in bsoup.findAll("script"):
-                    if "jwplayer.defaults" in str(s):
-                        if str(s).split("sources: [{file:")[1].split(",")[0].strip("\"") not in hotlinks:
-                            hotlinks.append(str(s).split("sources: [{file:")[1].split(",")[0].strip("\""))
-            elif "vidlox" in link:
-                bsoup = Soup(requests.get(link).text, 'html.parser')
-                for s in bsoup.findAll("script"):
-                    if "new Clappr.Player" in str(s):
-                        if str(s).split("sources: [")[1].split(",")[3].strip("\"").strip("\"]") not in hotlinks:
-                            hotlinks.append(str(s).split("sources: [")[1].split(",")[3].strip("\"").strip("\"]"))
+
                 bar.update(1)
 
             else:
@@ -176,13 +164,13 @@ class SimpleMovieApi(object):
         self.imdb = ImdbQuery(title)
         self.imdb.scrape_title_codes()
         self.title_code = self.imdb.title_codes[0]
-        self.url = "http://23.237.120.130/movies/movies/{}_play.mp4".format(self.title_code)
+        self.url = "https://api.hdv.fun/l1?imdb={}&ip=128.6.37.19".format(self.title_code)
 
     def check_for_movie(self):
+        movie_json = json.loads(requests.post(self.url).text)
         try:
-            urllib.request.urlopen(self.url)
-            return self.url
-        except urllib.error.HTTPError:
+            return {"src": movie_json[0]['src'][0]['src'], "quality": movie_json[0]['src'][0]['res']}
+        except IndexError:
             return -1
 
 
@@ -230,7 +218,6 @@ class ImdbQuery(object):
         except AttributeError:
             return 0
 
-
     @staticmethod
     def get_season_episodes(title_code, season):
         season_series_page = "https://www.imdb.com/title/{}/episodes?season={}&ref_=tt_eps_sn_1" \
@@ -257,6 +244,7 @@ class ImdbQuery(object):
         return titles
 
 
+# Main function for demo of API
 def main():
     while True:
         try:
@@ -301,23 +289,31 @@ def main():
             elif media_type == "1":
                 title = input("\nTitle:\n\n")
                 media = "movie"
-                va = VidnodeApi(media, title)
-                search = va.assemble_search_url()
-                media_url = va.assemble_media_url(search)
-                link_dict = va.scrape_final_links(media_url, False)
-                key_list = []
-                print("\nAvailable Qualities:\n\n")
-                try:
-                    for key in link_dict['hotlinks'].keys():
-                        key_list.append(key)
-                    for key in key_list:
-                        print("{}. {}\n".format(key_list.index(key), key))
-                    q_sel = int(input("\nSelect quality:\n\n"))
-                    link = link_dict['hotlinks'][key_list[q_sel]]
-                    print("\nLink:\n\n{}\n".format(link))
-                except TypeError:
-                    print("\nNo links were found!\n")
+                print("\nTrying Simple Movie API..\n")
+                sma = SimpleMovieApi(title)
+                result = sma.check_for_movie()
+                if result != -1:
+                    print("Link found: {}\n\nQuality: {}".format(result['src'], result['quality']))
                     continue
+                else:
+                    print("Simple movie API failed, trying Vidnode API..\n")
+                    va = VidnodeApi(media, title)
+                    search = va.assemble_search_url()
+                    media_url = va.assemble_media_url(search)
+                    link_dict = va.scrape_final_links(media_url, False)
+                    key_list = []
+                    print("\nAvailable Qualities:\n\n")
+                    try:
+                        for key in link_dict['hotlinks'].keys():
+                            key_list.append(key)
+                        for key in key_list:
+                            print("{}. {}\n".format(key_list.index(key), key))
+                        q_sel = int(input("\nSelect quality:\n\n"))
+                        link = link_dict['hotlinks'][key_list[q_sel]]
+                        print("\nLink:\n\n{}\n".format(link))
+                    except TypeError:
+                        print("\nNo links were found!\n")
+                        continue
         except TypeError or AttributeError or IndexError:
             print("\nNo links found!\n")
 
