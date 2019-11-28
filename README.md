@@ -1,7 +1,7 @@
 ## Vaporpic - Vidnode API for Originating Pirated Content
 ***
 
-*This module is intended to be used as an API, but it can also can be run standalone to fetch TV shows and movies.
+*This module is intended to be used as an API, but it can also be run standalone to fetch TV shows and movies.
 The documentation of it's installation and usage both as an API and a standalone module is below:*
 
 ***
@@ -53,6 +53,7 @@ If you select a movie, you will then be prompted with the following:
 ```
 Title:
 ```
+
 After entering the title, if links are found, you will either immediately get the link and quality back, or you will
 be prompted to select a quality like this:
 
