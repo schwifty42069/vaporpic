@@ -255,7 +255,7 @@ def main():
                 imdb_query = ImdbQuery(title)
                 imdb_query.scrape_title_codes()
                 if len(imdb_query.title_codes) == 0:
-                    print("\nNo links found!\n")
+                    print("\nNo imdb title found!\n")
                     continue
                 title_code = imdb_query.title_codes[0]
                 seasons = imdb_query.get_series_seasons(title_code)
@@ -265,23 +265,39 @@ def main():
                 for e in episode_titles:
                     print("\n{}".format(e))
                 episode = input("\nEpisode:\n\n")
-                va = VidnodeApi(media, title, s=season, e=episode)
-                search = va.assemble_search_url()
-                media_url = va.assemble_media_url(search)
-                link_dict = va.scrape_final_links(media_url, False)
-                key_list = []
-                print("\nAvailable Qualities:\n\n")
-                try:
-                    for key in link_dict['hotlinks'].keys():
-                        key_list.append(key)
-                    for key in key_list:
-                        print("{}. {}\n".format(key_list.index(key), key))
-                    q_sel = int(input("\nSelect quality:\n\n"))
-                    link = link_dict['hotlinks'][key_list[q_sel]]
-                    print("\nLink:\n\n{}\n".format(link))
-                except TypeError:
-                    print("\nNo links were found!\n")
-                    continue
+                print("\nTrying WatchEpisode API...\n")
+                we = WatchEpisodeApi(title, season, episode)
+                ref_link = we.fetch_ref_link()
+                source_list = we.build_source_link_list(ref_link)
+                hotlinks = we.scrape_hotlinks(source_list)
+                if len(hotlinks) != 0:
+                    print("\n\nLinks:\n")
+                    print("-------------------------------------------------------------------------------------------")
+                    for link in hotlinks:
+                        print("\n{}\n".format(link))
+                else:
+                    print("\nTrying Vidnode API...\n")
+                    key_list = []
+                    va = VidnodeApi(media, title, s=season, e=episode)
+                    search = va.assemble_search_url()
+                    media_url = va.assemble_media_url(search)
+                    link_dict = va.scrape_final_links(media_url, False)
+                    if len(link_dict['hotlinks']) != 0:
+                        print("\nAvailable Qualities:\n\n")
+                        try:
+                            for key in link_dict['hotlinks'].keys():
+                                key_list.append(key)
+                            for key in key_list:
+                                print("{}. {}\n".format(key_list.index(key), key))
+                            q_sel = int(input("\nSelect quality:\n\n"))
+                            link = link_dict['hotlinks'][key_list[q_sel]]
+                            print("\nLink:\n\n{}\n".format(link))
+                        except TypeError:
+                            print("\nNo links were found!\n")
+                            continue
+                    else:
+                        print("\nNo links found!\n")
+                        continue
             elif media_type == "q":
                 print("\nGoodbye!\n")
                 sys.exit()
