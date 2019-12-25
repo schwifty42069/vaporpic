@@ -1,9 +1,14 @@
+import configparser
 import json
+import os
 import sys
 
 import requests
 from bs4 import BeautifulSoup as Soup
 from tqdm import tqdm
+
+config = configparser.RawConfigParser()
+config.read("config/config.properties")
 
 
 class VidnodeApi(object):
@@ -114,7 +119,8 @@ class WatchEpisodeApi(object):
         bsoup = Soup(requests.get("{}/{}".format(self.root_url, title)).text, 'html.parser')
         for a in bsoup.findAll("a"):
             try:
-                if "person" not in a['href'] and "profile" not in a['href'] and self.formatted_search.lower() in a['href']:
+                if "person" not in a['href'] and "profile" not in a['href'] and self.formatted_search.lower() in \
+                        a['href']:
                     return a['href']
             except KeyError:
                 continue
@@ -132,11 +138,19 @@ class WatchEpisodeApi(object):
         source_links = []
         print("\nFinding source links...\n")
         bar = tqdm(total=len(link_list))
-        for link in link_list:
-            bsoup2 = Soup(requests.get(link).text, 'html.parser')
-            source_links.append(bsoup2.find("a", {"class": "detail-w-button act_watchlink2"})['data-actuallink'])
-            bar.update(1)
-        return source_links
+        try:
+            for link in link_list:
+                bar.update(1)
+                bsoup2 = Soup(requests.get(link).text, 'html.parser')
+                actual_link = bsoup2.find("a", {"class": "detail-w-button act_watchlink2"})['data-actuallink']
+                if "clipwatching" in actual_link and actual_link not in source_links or "videobin" in actual_link \
+                        and actual_link not in source_links:
+                    source_links.append(actual_link)
+                else:
+                    continue
+            return source_links
+        except TypeError:
+            return -1
 
     @staticmethod
     def scrape_hotlinks(source_links):
@@ -144,17 +158,18 @@ class WatchEpisodeApi(object):
         print("\nFinding hotlinks...\n")
         bar = tqdm(total=len(source_links))
         for link in source_links:
+            bsoup = Soup(requests.get(link).text, 'html.parser')
             if "clipwatching" in link:
-                bsoup = Soup(requests.get(link).text, 'html.parser')
                 for s in bsoup.findAll("script"):
-                    if "#hola" in str(s) and "player" in str(s):
-                        if str(s).split("sources: [{src: ")[1].split(",")[0].strip("\"") not in hotlinks:
-                            hotlinks.append(str(s).split("sources: [{src: ")[1].split(",")[0].strip("\""))
-
-                bar.update(1)
-
-            else:
-                continue
+                    if "#hola" in s.text and "player" in s.text:
+                        if s.text.split("sources: [{src: ")[1].split(",")[0].strip("\"") not in hotlinks:
+                            hotlinks.append(s.text.split("sources: [{src: ")[1].split(",")[0].strip("\""))
+            if "videobin" in link:
+                for s in bsoup.findAll("script"):
+                    if 'var player = new Clappr.Player({' in s.text:
+                        if s.text.split('[')[1].split(',"')[1].split('"]')[0] not in hotlinks:
+                            hotlinks.append(s.text.split('[')[1].split(',"')[1].split('"]')[0])
+            bar.update(1)
         return hotlinks
 
 
@@ -244,45 +259,190 @@ class ImdbQuery(object):
         return titles
 
 
+class M3UWriter(object):
+    def __init__(self, link, title):
+        self.link = link
+        self.raw_title = title
+        self.formatted_title = self.format_title(self.raw_title)
+        self.write_dir = config.get('output', 'dir') + "/{}.m3u".format(self.formatted_title)
+
+    @staticmethod
+    def format_title(title):
+        title_words = title.split()
+        formatted_title = ""
+        for word in title_words:
+            if title_words.index(word) != (len(title_words) - 1):
+                formatted_title += "{}_".format(word)
+            else:
+                formatted_title += word
+        return formatted_title
+
+    def initialize_m3u_file(self):
+        if os.path.exists(self.write_dir):
+            os.remove(self.write_dir)
+            with open(self.write_dir, "w") as writer:
+                writer.write('')
+                writer.close()
+        else:
+            with open(self.write_dir, "w") as writer:
+                writer.write('')
+                writer.close()
+
+    def write_m3u_chunk(self):
+        print("\nWriting links for {} to m3u...\n".format(self.raw_title))
+        with open(self.write_dir, "a") as writer:
+            writer.write("#EXTM3U\n")
+            writer.write("#EXTINF: -1,{}\n".format(self.formatted_title))
+            writer.write("{}\n\n".format(self.link))
+            writer.close()
+
+
 # Main function for demo of API
 def main():
     while True:
         try:
-            media_type = input("\nSelect media type:\n\n1. Movie\n\n2. TV\n\n")
-            if media_type == "2":
-                title = input("\nTitle:\n\n")
-                media = "tvod"
-                imdb_query = ImdbQuery(title)
-                imdb_query.scrape_title_codes()
-                if len(imdb_query.title_codes) == 0:
-                    print("\nNo imdb title found!\n")
-                    continue
-                title_code = imdb_query.title_codes[0]
-                seasons = imdb_query.get_series_seasons(title_code)
-                season = (input("\nSeason: (1 - {})\n\n".format(seasons)))
-                episode_titles = imdb_query.scrape_episode_titles(title_code, season)
-                print("\nEpisodes:\n")
-                for e in episode_titles:
-                    print("\n{}".format(e))
-                episode = input("\nEpisode:\n\n")
-                print("\nTrying WatchEpisode API...\n")
-                we = WatchEpisodeApi(title, season, episode)
-                ref_link = we.fetch_ref_link()
-                source_list = we.build_source_link_list(ref_link)
-                hotlinks = we.scrape_hotlinks(source_list)
-                if len(hotlinks) != 0:
-                    print("\n\nLinks:\n")
-                    print("-------------------------------------------------------------------------------------------")
-                    for link in hotlinks:
-                        print("\n{}\n".format(link))
-                else:
-                    print("\nTrying Vidnode API...\n")
-                    key_list = []
-                    va = VidnodeApi(media, title, s=season, e=episode)
-                    search = va.assemble_search_url()
-                    media_url = va.assemble_media_url(search)
-                    link_dict = va.scrape_final_links(media_url, False)
-                    if len(link_dict['hotlinks']) != 0:
+            try:
+                media_type = input("\nSelect media type:\n\n1. Movie\n\n2. TV\n\n")
+                if media_type == "2":
+                    title = input("\nTitle:\n\n")
+                    media = "tvod"
+                    imdb_query = ImdbQuery(title)
+                    imdb_query.scrape_title_codes()
+                    if len(imdb_query.title_codes) == 0:
+                        print("\nNo imdb title found!\n")
+                        continue
+                    title_code = imdb_query.title_codes[0]
+                    seasons = imdb_query.get_series_seasons(title_code)
+                    season = (input("\nSeason: (1 - {})\n\n".format(seasons)))
+                    episode_titles = imdb_query.scrape_episode_titles(title_code, season)
+                    print("\nEpisodes:\n")
+                    for e in episode_titles:
+                        print("\n{}".format(e))
+                    episode = input("\nEpisode:\n\n")
+                    api = int(input("\nSelect Primary API:\n\n1. WatchEpisode API (multi-source)\n\n2. Vidnode API\n\n"))
+                    if "." in title:
+                        words = title.split(".")
+                        title = ""
+                        for w in words:
+                            title += "{} ".format(w)
+
+                    if api == 1:
+                        print("\nTrying WatchEpisode API...\n")
+                        we = WatchEpisodeApi(title, season, episode)
+                        ref_link = we.fetch_ref_link()
+                        source_list = we.build_source_link_list(ref_link)
+                        hotlinks = we.scrape_hotlinks(source_list)
+                        if len(hotlinks) != 0:
+                            for link in hotlinks:
+                                m3u_writer = M3UWriter(link, "{}_{}_{}".format(title, season, episode))
+                                m3u_writer.write_m3u_chunk()
+                        else:
+                            print("\nTrying Vidnode API...\n")
+                            key_list = []
+                            va = VidnodeApi(media, title, s=season, e=episode)
+                            search = va.assemble_search_url()
+                            media_url = va.assemble_media_url(search)
+                            link_dict = va.scrape_final_links(media_url, False)
+                            if len(link_dict['hotlinks']) != 0:
+                                print("\nAvailable Qualities:\n\n")
+                                try:
+                                    for key in link_dict['hotlinks'].keys():
+                                        key_list.append(key)
+                                    for key in key_list:
+                                        print("{}. {}\n".format(key_list.index(key), key))
+                                    q_sel = int(input("\nSelect quality:\n\n"))
+                                    link = link_dict['hotlinks'][key_list[q_sel]]
+                                    m3u_writer = M3UWriter(link, "{}_{}_{}".format(title, season, episode))
+                                    m3u_writer.write_m3u_chunk()
+                                except TypeError:
+                                    print("\nNo links were found!\n")
+                                    continue
+                            else:
+                                print("\nNo links found!\n")
+                                continue
+                    elif api == 2:
+                        print("\nTrying Vidnode API...\n")
+                        key_list = []
+                        va = VidnodeApi(media, title, s=season, e=episode)
+                        search = va.assemble_search_url()
+                        media_url = va.assemble_media_url(search)
+                        link_dict = va.scrape_final_links(media_url, False)
+                        if len(link_dict['hotlinks']) != 0:
+                            print("\nAvailable Qualities:\n\n")
+                            try:
+                                for key in link_dict['hotlinks'].keys():
+                                    key_list.append(key)
+                                for key in key_list:
+                                    print("{}. {}\n".format(key_list.index(key), key))
+                                q_sel = int(input("\nSelect quality:\n\n"))
+                                link = link_dict['hotlinks'][key_list[q_sel]]
+                                m3u_writer = M3UWriter(link, "{} {} {}".format(title, season, episode))
+                                m3u_writer.write_m3u_chunk()
+                            except TypeError:
+                                print("\nNo links were found!\n")
+                                continue
+                        else:
+                            print("\nNo links found!\n")
+                            print("\nTrying WatchEpisode API...\n")
+                            we = WatchEpisodeApi(title, season, episode)
+                            ref_link = we.fetch_ref_link()
+                            source_list = we.build_source_link_list(ref_link)
+                            hotlinks = we.scrape_hotlinks(source_list)
+                            if len(hotlinks) != 0:
+                                for link in hotlinks:
+                                    m3u_writer = M3UWriter(link, "{}_{}_{}".format(title, season, episode))
+                                    m3u_writer.write_m3u_chunk()
+                            else:
+                                print("\nNo links found!\n")
+                                continue
+                elif media_type == "q":
+                    print("\nGoodbye!\n")
+                    sys.exit()
+
+                elif media_type == "1":
+                    title = input("\nTitle:\n\n")
+                    if "." in title:
+                        words = title.split(".")
+                        title = ""
+                        for w in words:
+                            title += "{} ".format(w)
+                    media = "movie"
+                    api = int(input("\nSelect Primary API:\n\n1. SimpleMovie API (m3u8)\n\n2. Vidnode API (mp4)\n\n"))
+                    if api == 1:
+                        print("\nTrying Simple Movie API..\n")
+                        sma = SimpleMovieApi(title)
+                        result = sma.check_for_movie()
+                        if result != -1:
+                            m3u_writer = M3UWriter(result['src'], "{}".format(title))
+                            m3u_writer.write_m3u_chunk()
+                            continue
+                        else:
+                            print("Simple movie API failed, trying Vidnode API..\n")
+                            va = VidnodeApi(media, title)
+                            search = va.assemble_search_url()
+                            media_url = va.assemble_media_url(search)
+                            link_dict = va.scrape_final_links(media_url, False)
+                            key_list = []
+                            print("\nAvailable Qualities:\n\n")
+                            try:
+                                for key in link_dict['hotlinks'].keys():
+                                    key_list.append(key)
+                                for key in key_list:
+                                    print("{}. {}\n".format(key_list.index(key), key))
+                                q_sel = int(input("\nSelect quality:\n\n"))
+                                link = link_dict['hotlinks'][key_list[q_sel]]
+                                m3u_writer = M3UWriter(link, "{}".format(title))
+                                m3u_writer.write_m3u_chunk()
+                            except TypeError:
+                                print("\nNo links were found!\n")
+                                continue
+                    elif api == 2:
+                        print("\nTrying Vidnode API..\n")
+                        va = VidnodeApi(media, title)
+                        search = va.assemble_search_url()
+                        media_url = va.assemble_media_url(search)
+                        link_dict = va.scrape_final_links(media_url, False)
+                        key_list = []
                         print("\nAvailable Qualities:\n\n")
                         try:
                             for key in link_dict['hotlinks'].keys():
@@ -291,47 +451,24 @@ def main():
                                 print("{}. {}\n".format(key_list.index(key), key))
                             q_sel = int(input("\nSelect quality:\n\n"))
                             link = link_dict['hotlinks'][key_list[q_sel]]
-                            print("\nLink:\n\n{}\n".format(link))
+                            m3u_writer = M3UWriter(link, "{}".format(title))
+                            m3u_writer.write_m3u_chunk()
                         except TypeError:
-                            print("\nNo links were found!\n")
-                            continue
-                    else:
-                        print("\nNo links found!\n")
-                        continue
-            elif media_type == "q":
-                print("\nGoodbye!\n")
-                sys.exit()
+                            print("\nVidnode API failed, trying Simple Movie API..\n")
+                            sma = SimpleMovieApi(title)
+                            result = sma.check_for_movie()
+                            if result != -1:
+                                m3u_writer = M3UWriter(result['src'], title)
+                                m3u_writer.write_m3u_chunk()
+                                continue
+                            else:
+                                print("\nNo links were found!\n")
 
-            elif media_type == "1":
-                title = input("\nTitle:\n\n")
-                media = "movie"
-                print("\nTrying Simple Movie API..\n")
-                sma = SimpleMovieApi(title)
-                result = sma.check_for_movie()
-                if result != -1:
-                    print("Link found: {}\n\nQuality: {}".format(result['src'], result['quality']))
-                    continue
-                else:
-                    print("Simple movie API failed, trying Vidnode API..\n")
-                    va = VidnodeApi(media, title)
-                    search = va.assemble_search_url()
-                    media_url = va.assemble_media_url(search)
-                    link_dict = va.scrape_final_links(media_url, False)
-                    key_list = []
-                    print("\nAvailable Qualities:\n\n")
-                    try:
-                        for key in link_dict['hotlinks'].keys():
-                            key_list.append(key)
-                        for key in key_list:
-                            print("{}. {}\n".format(key_list.index(key), key))
-                        q_sel = int(input("\nSelect quality:\n\n"))
-                        link = link_dict['hotlinks'][key_list[q_sel]]
-                        print("\nLink:\n\n{}\n".format(link))
-                    except TypeError:
-                        print("\nNo links were found!\n")
-                        continue
-        except TypeError or AttributeError or IndexError:
-            print("\nNo links found!\n")
+            except TypeError or AttributeError or IndexError:
+                print("\nNo links found!\n")
+        except KeyboardInterrupt:
+            os.system('cls' if os.name == 'nt' else 'clear')
+            continue
 
 
 if __name__ == "__main__":
